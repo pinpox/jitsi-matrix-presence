@@ -27,8 +27,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	log.Println(string(body))
-
+	// Parse hook data
 	var hookData ProsodyHookData
 	if err := json.Unmarshal(body, &hookData); err != nil {
 		log.Print("JSON Unmarshal error:", err)
@@ -36,39 +35,39 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message := ""
+	// Skip if room is not tracked
+	if !(slices.Contains(jitsiRooms, hookData.RoomName)) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if rooms[hookData.RoomName] == nil {
+		rooms[hookData.RoomName] = &RoomState{}
+	}
 
 	switch hookData.EventName {
 	case "muc-occupant-joined":
-		rooms.Join(hookData.RoomName, hookData.Occupant.ID)
-	//	// We only notify on first person joining
-	//	if len(rooms[hookData.RoomName]) == 1 {
-	//		if hookData.Occupant.Name == "" {
-	//			hookData.Occupant.Name = "Someone"
-	//		}
-	//		message = fmt.Sprintf("☎️  %v joined #%v", hookData.Occupant.Name, hookData.RoomName)
-	//	}
+		rooms[hookData.RoomName].NumParticipants++
 	case "muc-occupant-left":
-		rooms.Leave(hookData.RoomName, hookData.Occupant.ID)
-		// No notification needed. Call will end when last person leaves
-		// message = fmt.Sprintf("%☎️%v left #%v", hookData.Occupant.Name, hookData.RoomName)
+		rooms[hookData.RoomName].NumParticipants--
 	case "muc-room-created":
-		rooms.Create(hookData.RoomName)
-		message = fmt.Sprintf("☎️  Call at <a href='%v/%v'>%v</a> started", jitsiServer, hookData.RoomName, hookData.RoomName)
+		rooms[hookData.RoomName].NumParticipants = 0
 	case "muc-room-destroyed":
-		rooms.Destroy(hookData.RoomName)
-		message = fmt.Sprintf("☎️  Call at <a href='%v/%v'>%v</a> ended", jitsiServer, hookData.RoomName, hookData.RoomName)
+		err = deleteMatrixMessage(rooms[hookData.RoomName].MsgID)
+		delete(rooms, hookData.RoomName)
+		w.WriteHeader(http.StatusOK)
+		return
 	default:
 		log.Println("Unknown event-type received:", hookData.EventName)
 	}
 
-	if slices.Contains(jitsiRooms, hookData.RoomName) && message != "" {
+	message := fmt.Sprintf(
+		"☎️  Call at <a href='%v/%v'>%v</a> started<br>Currently %v participant(s) in the call",
+		jitsiServer, hookData.RoomName, hookData.RoomName, rooms[hookData.RoomName].NumParticipants)
 
-		if err = sendMatrixMessage(message); err != nil {
-			log.Printf("Error sending message: %v\n", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
+	if err = sendOrUpdate(message, hookData.RoomName); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("Failed to send or update message", err)
 	}
 
 	// Send a response back to the webhook sender
@@ -76,41 +75,32 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintln(w, "Webhook received successfully!")
 }
 
-type Rooms map[string][]string
+func sendOrUpdate(message, roomName string) error {
+	var err error
+	var newMsgID string
 
-var rooms Rooms = make(map[string][]string)
-
-func (rs Rooms) Create(room string) {
-	rs[room] = []string{}
-}
-
-func (rs Rooms) Destroy(room string) {
-	delete(rs, room)
-}
-
-func (rs Rooms) Join(room, user string) {
-	rs[room] = append(rs[room], user)
-}
-
-func (rs Rooms) Leave(room, user string) {
-	r := rs[room]
-	for i, u := range r {
-		if u == user {
-			rs[room] = append(r[:i], r[i+1:]...)
+	if rooms[roomName].MsgID == "" {
+		newMsgID, err = sendMatrixMessage(message)
+		if err != nil {
+			return err
 		}
+		rooms[roomName].MsgID = newMsgID
+	} else {
+		return replaceMatrixMessage(rooms[roomName].MsgID, message)
 	}
+
+	return err
 }
 
 func getCheck(key string) string {
-
 	val, ok := os.LookupEnv(key)
 	if !ok {
 		log.Fatalf("%s not set\n", key)
 	}
-
 	return val
 }
 
+// env vars
 var homeserverURL string
 var userID string
 var accessToken string
@@ -118,7 +108,15 @@ var roomID string
 var listenAddress string
 var jitsiServer string
 var jitsiRooms []string
+
 var matrixClient *gomatrix.Client
+
+type RoomState struct {
+	NumParticipants int
+	MsgID           string
+}
+
+var rooms = make(map[string]*RoomState)
 
 func init() {
 	var err error
@@ -135,7 +133,6 @@ func init() {
 	if err != nil {
 		panic(fmt.Errorf("failed to create matrix client: %w", err))
 	}
-
 }
 
 func main() {
@@ -147,14 +144,54 @@ func main() {
 }
 
 // sendMatrixMessage sends a plain-text message to the specified Matrix room.
-func sendMatrixMessage(message string) error {
-	var err error
+func sendMatrixMessage(message string) (string, error) {
 
 	// Send a text message to the room
-	_, err = matrixClient.SendFormattedText(roomID, message, message)
+	resp, err := matrixClient.SendFormattedText(roomID, message, message)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	return resp.EventID, nil
+}
+
+// deleteMatrixMessage deletes (redacts) a message
+func deleteMatrixMessage(eventID string) error {
+
+	_, err := matrixClient.RedactEvent(roomID, eventID, &gomatrix.ReqRedact{})
+
+	if err != nil {
+		return fmt.Errorf("failed to redact message: %w", err)
 	}
 
 	return nil
+}
+
+// replaceMatrixMessage edits (replaces) a message
+func replaceMatrixMessage(eventID, newMessage string) error {
+
+	content := map[string]interface{}{
+		"msgtype": "m.text",
+		// The fallback body (what older clients see) often starts with "* " to indicate an edit:
+		"body": "* " + newMessage,
+		"m.new_content": map[string]interface{}{
+			"body":           newMessage,
+			"format":         "org.matrix.custom.html",
+			"formatted_body": newMessage,
+			"msgtype":        "m.text",
+		},
+
+		"m.relates_to": map[string]interface{}{
+			"rel_type": "m.replace",
+			"event_id": eventID,
+		},
+	}
+
+	// Send the "m.room.message" event with the special content that references the original event
+	_, err := matrixClient.SendMessageEvent(roomID, "m.room.message", content)
+	if err != nil {
+		return fmt.Errorf("failed to send replacement message: %w", err)
+	}
+	return nil
+
 }
