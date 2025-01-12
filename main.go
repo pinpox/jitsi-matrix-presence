@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/matrix-org/gomatrix"
 )
@@ -25,6 +27,8 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	log.Println(string(body))
+
 	var hookData ProsodyHookData
 	if err := json.Unmarshal(body, &hookData); err != nil {
 		log.Print("JSON Unmarshal error:", err)
@@ -37,24 +41,34 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	switch hookData.EventName {
 	case "muc-occupant-joined":
 		rooms.Join(hookData.RoomName, hookData.Occupant.ID)
-		message = "someone joined the room"
+	//	// We only notify on first person joining
+	//	if len(rooms[hookData.RoomName]) == 1 {
+	//		if hookData.Occupant.Name == "" {
+	//			hookData.Occupant.Name = "Someone"
+	//		}
+	//		message = fmt.Sprintf("☎️  %v joined #%v", hookData.Occupant.Name, hookData.RoomName)
+	//	}
 	case "muc-occupant-left":
 		rooms.Leave(hookData.RoomName, hookData.Occupant.ID)
-		message = "someone left the room"
+		// No notification needed. Call will end when last person leaves
+		// message = fmt.Sprintf("%☎️%v left #%v", hookData.Occupant.Name, hookData.RoomName)
 	case "muc-room-created":
 		rooms.Create(hookData.RoomName)
-		message = "Room was created"
+		message = fmt.Sprintf("☎️  Call at <a href='%v/%v'>%v</a> started", jitsiServer, hookData.RoomName, hookData.RoomName)
 	case "muc-room-destroyed":
 		rooms.Destroy(hookData.RoomName)
-		message = "Room was destroyed"
+		message = fmt.Sprintf("☎️  Call at <a href='%v/%v'>%v</a> ended", jitsiServer, hookData.RoomName, hookData.RoomName)
 	default:
 		log.Println("Unknown event-type received:", hookData.EventName)
 	}
 
-	if err = sendMatrixMessage(message); err != nil {
-		log.Printf("Error sending message: %v\n", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	if slices.Contains(jitsiRooms, hookData.RoomName) && message != "" {
+
+		if err = sendMatrixMessage(message); err != nil {
+			log.Printf("Error sending message: %v\n", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Send a response back to the webhook sender
@@ -64,7 +78,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 type Rooms map[string][]string
 
-var rooms Rooms
+var rooms Rooms = make(map[string][]string)
 
 func (rs Rooms) Create(room string) {
 	rs[room] = []string{}
@@ -89,12 +103,12 @@ func (rs Rooms) Leave(room, user string) {
 
 func getCheck(key string) string {
 
-	val := os.Getenv(key)
-	if val == "" {
-		log.Fatalf("Environment not set: %v", key)
+	val, ok := os.LookupEnv(key)
+	if !ok {
+		log.Fatalf("%s not set\n", key)
 	}
-	return val
 
+	return val
 }
 
 var homeserverURL string
@@ -102,18 +116,20 @@ var userID string
 var accessToken string
 var roomID string
 var listenAddress string
+var jitsiServer string
+var jitsiRooms []string
 var matrixClient *gomatrix.Client
-
-// var matrixClient Client
 
 func init() {
 	var err error
 
 	homeserverURL = getCheck("HOMESERVER_URL")
+	jitsiServer = getCheck("JITSI_SERVER")
 	userID = getCheck("USER_ID")
 	accessToken = getCheck("ACCESS_TOKEN")
 	roomID = getCheck("ROOM_ID")
 	listenAddress = getCheck("LISTEN_ADDRESS")
+	jitsiRooms = strings.Split(getCheck("JITSI_ROOMS"), ",")
 
 	matrixClient, err = gomatrix.NewClient(homeserverURL, userID, accessToken)
 	if err != nil {
@@ -123,7 +139,7 @@ func init() {
 }
 
 func main() {
-	http.HandleFunc("/webhook", webhookHandler)
+	http.HandleFunc("/", webhookHandler)
 	log.Printf("Starting server on %s...\n", listenAddress)
 	if err := http.ListenAndServe(listenAddress, nil); err != nil {
 		log.Fatalf("ListenAndServe failed: %v", err)
@@ -135,7 +151,7 @@ func sendMatrixMessage(message string) error {
 	var err error
 
 	// Send a text message to the room
-	_, err = matrixClient.SendText(roomID, message)
+	_, err = matrixClient.SendFormattedText(roomID, message, message)
 	if err != nil {
 		return err
 	}

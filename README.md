@@ -13,6 +13,8 @@ Configuration is done via environment variables
 | `ACCESS_TOKEN`   | Typically obtained via login or auth method |
 | `ROOM_ID`        | e.g. "!YourRoomID:matrix.example.com"       |
 | `LISTEN_ADDRESS` | Adress to listen for Webhooks               |
+| `JITSI_ROOMS`    | Comma-separated list of jitsi rooms to tack |
+| `JITSI_SERVER`   | Jitsi Server URI for the links              |
 
 ## Testing
 
@@ -23,5 +25,5 @@ Use the following command to test:
 curl -X POST \
      -H "Content-Type: application/json" \
      -d @testdata/muc-occupant-joined.json \
-     http://localhost:8080/webhook
+     http://localhost:8080/
 ```
