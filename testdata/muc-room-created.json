@@ -1,0 +1,7 @@
+{
+  "event_name": "muc-room-created",
+  "room_name": "catchup",
+  "room_jid": "catchup@conference.meet.mydomain.com",
+  "is_breakout": false,
+  "created_at": 1625823996
+}
