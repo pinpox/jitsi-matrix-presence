@@ -36,15 +36,19 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch hookData.EventName {
 	case "muc-occupant-joined":
+		rooms.Join(hookData.RoomName, hookData.Occupant.ID)
 		message = "someone joined the room"
 	case "muc-occupant-left":
+		rooms.Leave(hookData.RoomName, hookData.Occupant.ID)
 		message = "someone left the room"
 	case "muc-room-created":
+		rooms.Create(hookData.RoomName)
 		message = "Room was created"
 	case "muc-room-destroyed":
+		rooms.Destroy(hookData.RoomName)
 		message = "Room was destroyed"
 	default:
-		log.Printf("Unknown event-type received")
+		log.Println("Unknown event-type received:", hookData.EventName)
 	}
 
 	if err = sendMatrixMessage(message); err != nil {
@@ -56,6 +60,31 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// Send a response back to the webhook sender
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintln(w, "Webhook received successfully!")
+}
+
+type Rooms map[string][]string
+
+var rooms Rooms
+
+func (rs Rooms) Create(room string) {
+	rs[room] = []string{}
+}
+
+func (rs Rooms) Destroy(room string) {
+	delete(rs, room)
+}
+
+func (rs Rooms) Join(room, user string) {
+	rs[room] = append(rs[room], user)
+}
+
+func (rs Rooms) Leave(room, user string) {
+	r := rs[room]
+	for i, u := range r {
+		if u == user {
+			rs[room] = append(r[:i], r[i+1:]...)
+		}
+	}
 }
 
 func getCheck(key string) string {
