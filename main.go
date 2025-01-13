@@ -9,9 +9,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/matrix-org/gomatrix"
 )
+
+var mu sync.Mutex
 
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -41,6 +44,11 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// We need to block until the message is send, so we can save the message
+	// ID. Without mutex it might send to messages instead of replacing
+	mu.Lock()
+	defer mu.Unlock()
+
 	if rooms[hookData.RoomName] == nil {
 		rooms[hookData.RoomName] = &RoomState{}
 	}
@@ -49,6 +57,10 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	case "muc-occupant-joined":
 		rooms[hookData.RoomName].NumParticipants++
 	case "muc-occupant-left":
+		if rooms[hookData.RoomName].NumParticipants == 0 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		rooms[hookData.RoomName].NumParticipants--
 	case "muc-room-created":
 		rooms[hookData.RoomName].NumParticipants = 0
