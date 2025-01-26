@@ -40,6 +40,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Skip if room is not tracked
 	if !(slices.Contains(jitsiRooms, hookData.RoomName)) {
+		log.Println("Received data for untracked room:", hookData.RoomName)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -88,16 +89,19 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendOrUpdate(message, roomName string) error {
+
 	var err error
 	var newMsgID string
 
 	if rooms[roomName].MsgID == "" {
+		log.Println("Sending new message to", roomName)
 		newMsgID, err = sendMatrixMessage(message)
 		if err != nil {
 			return err
 		}
 		rooms[roomName].MsgID = newMsgID
 	} else {
+		log.Println("Updating message to ", roomName)
 		return replaceMatrixMessage(rooms[roomName].MsgID, message)
 	}
 
@@ -161,6 +165,7 @@ func sendMatrixMessage(message string) (string, error) {
 	// Send a text message to the room
 	resp, err := matrixClient.SendFormattedText(roomID, message, message)
 	if err != nil {
+		log.Println("Failed to send message:", err)
 		return "", err
 	}
 
