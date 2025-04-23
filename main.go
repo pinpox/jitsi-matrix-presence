@@ -61,13 +61,13 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch hookData.EventName {
 	case "muc-occupant-joined":
-		rooms[hookData.RoomName].NumParticipants = hookData.ActiveOccupantsCount
+		rooms[hookData.RoomName].NumParticipants++
 	case "muc-occupant-left":
 		if rooms[hookData.RoomName].NumParticipants == 0 {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		rooms[hookData.RoomName].NumParticipants = hookData.ActiveOccupantsCount
+		rooms[hookData.RoomName].NumParticipants--
 	case "muc-room-created":
 		rooms[hookData.RoomName].NumParticipants = 0
 	case "muc-room-destroyed":
@@ -192,18 +192,18 @@ func deleteMatrixMessage(eventID string) error {
 // replaceMatrixMessage edits (replaces) a message
 func replaceMatrixMessage(eventID, newMessage string) error {
 
-	content := map[string]interface{}{
+	content := map[string]any{
 		"msgtype": "m.text",
 		// The fallback body (what older clients see) often starts with "* " to indicate an edit:
 		"body": "* " + newMessage,
-		"m.new_content": map[string]interface{}{
+		"m.new_content": map[string]any{
 			"body":           newMessage,
 			"format":         "org.matrix.custom.html",
 			"formatted_body": newMessage,
 			"msgtype":        "m.text",
 		},
 
-		"m.relates_to": map[string]interface{}{
+		"m.relates_to": map[string]any{
 			"rel_type": "m.replace",
 			"event_id": eventID,
 		},
