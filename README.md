@@ -15,6 +15,7 @@ Configuration is done via environment variables
 | `LISTEN_ADDRESS` | Adress to listen for Webhooks               |
 | `JITSI_ROOMS`    | Comma-separated list of jitsi rooms to tack |
 | `JITSI_SERVER`   | Jitsi Server URI for the links              |
+| `DEBUG`          | Set to `true` to enable logging hook data   |
 
 ## Testing
 

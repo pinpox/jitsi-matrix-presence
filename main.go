@@ -54,16 +54,19 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 		rooms[hookData.RoomName] = &RoomState{}
 	}
 
+	_, ok := os.LookupEnv("DEBUG")
+	if ok {
+		log.Printf("Received hook data:\n%+v\n", hookData)
+	}
+
 	switch hookData.EventName {
 	case "muc-occupant-joined":
 		rooms[hookData.RoomName].NumParticipants = hookData.ActiveOccupantsCount
-		log.Println("Got participants:", hookData.ActiveOccupantsCount)
 	case "muc-occupant-left":
 		if rooms[hookData.RoomName].NumParticipants == 0 {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		log.Println("Got participants:", hookData.ActiveOccupantsCount)
 		rooms[hookData.RoomName].NumParticipants = hookData.ActiveOccupantsCount
 	case "muc-room-created":
 		rooms[hookData.RoomName].NumParticipants = 0
