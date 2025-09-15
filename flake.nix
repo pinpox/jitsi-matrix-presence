@@ -36,6 +36,7 @@
             inherit version;
             src = ./.;
             vendorHash = "sha256-98jAJEbT+06PhJChMjGRI4fHbiqGbXWuMA13SgTSGjA=";
+            meta.mainProgram = "jitsi-presence";
           };
         });
     };
